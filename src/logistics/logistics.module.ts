@@ -1,9 +1,9 @@
 import { Module } from '@nestjs/common';
-import { ShiplogicController } from './shiplogic.controller';
+import { LogisticsController } from './logistics.controller';
+import { LogisticsService } from './logistics.service';
 
 @Module({
-  controllers: [
-    ShiplogicController // Hooks your multi-carrier tracking listener endpoint into the app router
-  ],
+  controllers: [LogisticsController],
+  providers: [LogisticsService],
 })
 export class LogisticsModule {}
