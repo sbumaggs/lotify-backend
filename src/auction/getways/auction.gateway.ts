@@ -1,3 +1,4 @@
+// src/auction/gateways/auction.gateway.ts
 import {
   WebSocketGateway,
   SubscribeMessage,
@@ -10,8 +11,8 @@ import {
 import { Server, Socket } from 'socket.io';
 import { Inject, UsePipes, ValidationPipe } from '@nestjs/common';
 import { SupabaseClient } from '@supabase/supabase-js';
-import { DatabaseCacheService } from '../database/database-cache.service';
-import { PlaceBidDto } from './dto/place-bid.dto';
+import { DatabaseCacheService } from '../../database/database-cache.service';
+import { PlaceBidDto } from '../dto/place-bid.dto';
 import Redis from 'ioredis';
 
 @WebSocketGateway({
@@ -159,5 +160,35 @@ export class AuctionGateway implements OnGatewayConnection, OnGatewayDisconnect 
       // Always unlock the concurrency gate
       await this.redis.del(lockKey);
     }
+  }
+
+  /**
+   * 🔒 REAL-TIME LOCKOUT CONTROL DURING CHECKOUT PROCEDURES
+   * Prevents other users from submitting bids while this lot's settlement is being processed.
+   */
+  @SubscribeMessage('initiateCheckoutLock')
+  async handleCheckoutLock(
+    @MessageBody() data: { auction_lot_id: string; buyer_id: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const { auction_lot_id, buyer_id } = data;
+    const lockKey = `lock:checkout:${auction_lot_id}`;
+
+    // Set a concurrency mutex lock in Redis to prevent multiple people hitting checkout triggers simultaneously
+    const acquired = await this.redis.set(lockKey, buyer_id, 'EX', 45, 'NX'); // 45-second lock window
+
+    if (!acquired) {
+      client.emit('checkoutLockFailed', { 
+        message: 'This auction lot settlement frame is currently being processed by another entity.' 
+      });
+      return;
+    }
+
+    // Broadcast down the line to all listening clients to lock the bidding floor UI instantly
+    this.server.emit(`lotLock:${auction_lot_id}`, {
+      auction_lot_id: auction_lot_id,
+      status: 'SETTLING',
+      locked_by: buyer_id
+    });
   }
 }
